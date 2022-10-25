@@ -22,5 +22,6 @@ apiPub = "abcdefgh"
 apiPriv = "11111111-1111-1111-1111-111111111111"
 driverCreds = "user:pass"
 groupId = "111111111111111111111111"
+connectionStringSubdomain = "abcdef"
 
 ```

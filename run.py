@@ -15,11 +15,16 @@ from dotenv import load_dotenv
 #########################################
 """
 
+#
+# Get Credentials from .env
+#
+
 load_dotenv()
 
 digest = HTTPDigestAuth(os.environ.get('apiPub'), os.environ.get('apiPriv'))
 driverCreds = os.environ.get('driverCreds')
 groupId = os.environ.get('groupId')
+connectionStringSubdomain = os.environ.get('connectionStringSubdomain')
 
 #
 # Spin Up New Cluster
@@ -28,7 +33,6 @@ groupId = os.environ.get('groupId')
 newClusterURL = "https://cloud.mongodb.com/api/atlas/v1.0/groups/"+groupId+"/clusters"
 
 clustername = ("edu-"+str(time.time())).replace(".","")
-
 
 payload = {
     "autoScaling": {"diskGBEnabled": True},
@@ -49,11 +53,12 @@ print("New Cluster: "+clustername)
 # Wait for cluster to load before proceeding
 #
 
-mongoURL = "mongodb+srv://"+driverCreds+"@"+clustername+".6xgii.mongodb.net/?retryWrites=true&w=majority"
+mongoURL = "mongodb+srv://"+driverCreds+"@"+clustername+"."+connectionStringSubdomain+".mongodb.net/?retryWrites=true&w=majority"
 
 running = False
 tries = 1
 
+# Keep trying to connect until it's finally successful
 while running == False:
     try:
         client = pymongo.MongoClient(mongoURL)
@@ -79,7 +84,7 @@ with open('student_grades.json') as file:
 
 student_grades=[]
 
-#convert dates to datetime
+# convert dates to datetime
 
 for doc in file_data:
 
@@ -105,6 +110,7 @@ else:
 
 print("Fix Dates")
 
+# Find most recent date_completed
 maxdate = list(collection.aggregate([
                {
                    "$sort":{"date_completed":-1}
@@ -120,6 +126,7 @@ maxdate = list(collection.aggregate([
                }
            ]))[0]["max_date_completed"]
 
+# Update all date_completed to be closer to today
 pipeline = [
    {
        "$addFields":{
@@ -167,7 +174,7 @@ response = collection.update_many(filter = {}, update = pipeline)
 print("... Updated")
 
 #
-# Count Un-Archived Docs
+# Count Un-Archived Docs Before Creating Archive
 #
 
 before = collection.count_documents({})
@@ -204,6 +211,7 @@ archiveConfig = {
 
 response = requests.request("POST", createArchiveURL, json=archiveConfig, headers={"Content-Type": "application/json"}, params={"pretty":"true"}, auth=digest)
 resp = json.loads(response.text)
+
 archiveID = resp["_id"]
 archiveStatus =  resp["state"]
 lastArchiveRunEnd = False
@@ -217,6 +225,8 @@ tries = 1
 count = collection.count_documents({})
 
 print("... ID: "+str(archiveID))
+
+# Keep checking API for the archive until lastArchiveRun shows up, indicating it completed the first archive
 
 while lastArchiveRunEnd == False:
     try:
@@ -240,6 +250,7 @@ while lastArchiveRunEnd == False:
 
 print ("... Done")
 
+# How many docs are in the collection now?
 after = collection.count_documents({})
 print("After: "+str(after))
 
@@ -257,5 +268,6 @@ archiveClient = pymongo.MongoClient(archiveConnectionString)
 archiveDB = archiveClient.education
 archiveCollection = archiveDB.student_grades
 
+# How many docs are in the archive?
 archiveAfter = archiveCollection.count_documents({})
 print("Archived: "+str(archiveAfter))
