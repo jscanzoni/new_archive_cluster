@@ -174,6 +174,15 @@ response = collection.update_many(filter = {}, update = pipeline)
 print("... Updated")
 
 #
+# Create indexes
+#
+
+print("Creating indexes")
+
+collection.create_index('date_completed', unique = False)
+
+
+#
 # Count Un-Archived Docs Before Creating Archive
 #
 
