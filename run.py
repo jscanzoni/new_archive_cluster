@@ -26,6 +26,9 @@ driverCreds = os.environ.get('driverCreds')
 groupId = os.environ.get('groupId')
 connectionStringSubdomain = os.environ.get('connectionStringSubdomain')
 
+setupArchive = True     # False if you want to manually create the archive in Atlas
+daysArchive = 30        # Override the number of days to keep hot before archiving
+
 #
 # Spin Up New Cluster
 #
@@ -181,102 +184,142 @@ print("Creating indexes")
 
 collection.create_index('date_completed', unique = False)
 
-
 #
-# Count Un-Archived Docs Before Creating Archive
-#
-
-before = collection.count_documents({})
-print("Before: "+str(before))
-
-
-#
-# Create Online Archive
+# Do we automatically set up the archive or do we want to demo it in Atlas?
 #
 
-print ("Creating Archive")
+if setupArchive:
+    #
+    # Count Un-Archived Docs Before Creating Archive
+    #
 
-createArchiveURL = newClusterURL+"/"+clustername+"/onlineArchives"
+    before = collection.count_documents({})
+    print("Before: "+str(before))
 
-archiveConfig = {
-        "dbName": "education",
-        "collName": "student_grades",
-        "partitionFields": [
-                {
-                        "fieldName": "student_name.last",
-                        "order": 0
-                },
-                {
-                        "fieldName": "assignment_name",
-                        "order": 1
-              }],
-        "criteria": {
-                "type": "DATE",
-                "dateField": "date_completed",
-                "dateFormat": "ISODATE",
-                "expireAfterDays": 7
-  }
-}
 
-response = requests.request("POST", createArchiveURL, json=archiveConfig, headers={"Content-Type": "application/json"}, params={"pretty":"true"}, auth=digest)
-resp = json.loads(response.text)
+    #
+    # Create Online Archive
+    #
 
-archiveID = resp["_id"]
-archiveStatus =  resp["state"]
-lastArchiveRunEnd = False
+    print ("Creating Archive")
 
-#
-# Count Un-Archived Docs
-#
+    createArchiveURL = newClusterURL+"/"+clustername+"/onlineArchives"
 
-tries = 1
+    archiveConfig = {
+            "dbName": "education",
+            "collName": "student_grades",
+            "partitionFields": [
+                    {
+                            "fieldName": "student_name.last",
+                            "order": 0
+                    },
+                    {
+                            "fieldName": "assignment_name",
+                            "order": 1
+                }],
+            "criteria": {
+                    "type": "DATE",
+                    "dateField": "date_completed",
+                    "dateFormat": "ISODATE",
+                    "expireAfterDays": daysArchive
+    }
+    }
 
-count = collection.count_documents({})
+    response = requests.request("POST", createArchiveURL, json=archiveConfig, headers={"Content-Type": "application/json"}, params={"pretty":"true"}, auth=digest)
+    resp = json.loads(response.text)
 
-print("... ID: "+str(archiveID))
+    archiveID = resp["_id"]
+    archiveStatus =  resp["state"]
+    lastArchiveRunEnd = False
 
-# Keep checking API for the archive until lastArchiveRun shows up, indicating it completed the first archive
+    #
+    # Count Un-Archived Docs
+    #
 
-while lastArchiveRunEnd == False:
-    try:
-        response = requests.request("GET", createArchiveURL+"/"+str(archiveID), headers={"Content-Type": "application/json"}, params={"pretty":"true"}, auth=digest)
-        resp = json.loads(response.text)
-        archiveStatus = resp["state"]
+    tries = 1
 
-        if "lastArchiveRun" in resp.keys():
-            lastArchiveRunEnd = True
-        else:
-            lastArchiveRunEnd = False
-
-        print(str(tries) + ".) "+archiveStatus+" / "+str(count)+" in collection")
-    except Exception as e:
-        print(str(tries) + ".) missed")
-        pass  # Could happen in face of bad user input 
-    
-    tries += 1
-    time.sleep(30)
     count = collection.count_documents({})
 
-print ("... Done")
+    print("... ID: "+str(archiveID))
 
-# How many docs are in the collection now?
-after = collection.count_documents({})
-print("After: "+str(after))
+    # Keep checking API for the archive until lastArchiveRun shows up, indicating it completed the first archive
 
-#
-# Count Archived Docs
-#
+    while lastArchiveRunEnd == False:
+        try:
+            response = requests.request("GET", createArchiveURL+"/"+str(archiveID), headers={"Content-Type": "application/json"}, params={"pretty":"true"}, auth=digest)
+            resp = json.loads(response.text)
+            archiveStatus = resp["state"]
 
-getClusterURL = "https://cloud.mongodb.com/api/atlas/v1.0/groups/"+groupId+"/clusters/"+clustername
+            if "lastArchiveRun" in resp.keys():
+                lastArchiveRunEnd = True
+            else:
+                lastArchiveRunEnd = False
 
-response = requests.request("GET", getClusterURL, headers={"Content-Type": "application/json"}, params={"pretty":"true"}, auth=digest)
+            print(str(tries) + ".) "+archiveStatus+" / "+str(count)+" in collection")
+        except Exception as e:
+            print(str(tries) + ".) missed")
+            pass  # Could happen in face of bad user input 
+        
+        tries += 1
+        time.sleep(30)
+        count = collection.count_documents({})
 
-archiveConnectionString = json.loads(response.text)["connectionStrings"]["onlineArchive"].replace("//","//"+driverCreds+"@archived-")
-archiveClient = pymongo.MongoClient(archiveConnectionString)
+    print ("... Done")
 
-archiveDB = archiveClient.education
-archiveCollection = archiveDB.student_grades
+    # How many docs are in the collection now?
+    after = collection.count_documents({})
+    print("After: "+str(after))
 
-# How many docs are in the archive?
-archiveAfter = archiveCollection.count_documents({})
-print("Archived: "+str(archiveAfter))
+    #
+    # Count Archived Docs
+    #
+
+    getClusterURL = "https://cloud.mongodb.com/api/atlas/v1.0/groups/"+groupId+"/clusters/"+clustername
+
+    response = requests.request("GET", getClusterURL, headers={"Content-Type": "application/json"}, params={"pretty":"true"}, auth=digest)
+
+    archiveConnectionString = json.loads(response.text)["connectionStrings"]["onlineArchive"].replace("//","//"+driverCreds+"@archived-")
+    archiveClient = pymongo.MongoClient(archiveConnectionString)
+
+    archiveDB = archiveClient.education
+    archiveCollection = archiveDB.student_grades
+
+    # How many docs are in the archive?
+    archiveAfter = archiveCollection.count_documents({})
+    print("Archived: "+str(archiveAfter))
+    print("/n")
+    print("Connection String: "+str(archiveAfter))
+    print("/n")
+    print("Archive Connection String: "+str(archiveConnectionString))
+    print("/n")
+    print("Unified Connection String: "+str(archiveConnectionString))
+
+else:
+
+    #
+    # Print necessary details to console
+    #
+
+    archiveConfig = {
+            "dbName": "education",
+            "collName": "student_grades",
+            "partitionFields": [
+                    {
+                            "fieldName": "student_name.last",
+                            "order": 0
+                    },
+                    {
+                            "fieldName": "assignment_name",
+                            "order": 1
+                }],
+            "criteria": {
+                    "type": "DATE",
+                    "dateField": "date_completed",
+                    "dateFormat": "ISODATE",
+                    "expireAfterDays": daysArchive
+    }
+    }
+
+    print("All Done!")
+    print("Cluster: "+clustername)
+    print(json.dumps(archiveConfig, indent=4))
